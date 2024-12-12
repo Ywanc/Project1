@@ -33,7 +33,7 @@ def fetch_case_links(base_url):
 
 url1 = "https://www.elitigation.sg/gd/Home/Index?Filter=SUPCT&YearOfDecision=All&SortBy=DateOfDecision&CurrentPage=" 
 url2 = "&SortAscending=False&PageSize=0&Verbose=False&SearchQueryTime=0&SearchTotalHits=0&SearchMode=True&SpanMultiplePages=False"
-for i in range(1, 981):
+for i in range(252, 981):
     page_links = fetch_case_links(url1 + str(i) + url2)
     print(f"Scraping {i}th page ... ")
     for link in page_links:
