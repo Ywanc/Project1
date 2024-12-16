@@ -18,7 +18,7 @@ percentage_by_year.plot(kind='bar', stacked=True, color=['orange', 'blue'])
 # Add labels and title
 plt.ylabel('Percentage')
 plt.title('Percentage of True/False Values per Year')
-plt.legend(title='is_facts_present', loc='upper left')
+plt.legend(title='has_facts_header', loc='upper left')
 
 # Show the plot
 plt.show()
