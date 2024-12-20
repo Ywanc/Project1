@@ -1,38 +1,36 @@
 import torch
-from classifier.classify import classify, scrape_pars
-from classifier.model import TextClassifier
+from classifier.classify import scrape_pars
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, BartTokenizer, BartForConditionalGeneration
-import os 
-import shutil
-import gdown
+from setfit import SetFitModel
+import gdown, os
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
+print(device)
+
+# 0) Download model weights
+weights_path = 'trained_setfit_model'
+if not os.path.exists(weights_path):
+    weights_url = "https://drive.google.com/drive/folders/1LaHFXej2nYgdGmjwsjnIuD4_mv3_JToS"
+    gdown.download_folder(weights_url)
+else:
+    print(f"File {weights_path} already exists. Skipping download.")
 
 # 1) Classify factual paragraphs
-tokenizer = AutoTokenizer.from_pretrained("nlpaueb/legal-bert-base-uncased")
-clf_model = TextClassifier(num_cats=3).to(device)
-
-# download weights 
-url = 'https://drive.google.com/uc?id=12avyewxhHAW9NoveVD1KBVvGiM5qp40r'
-
-output_path = 'clf_weights.pth' 
-try:
-    gdown.download(url, output_path, quiet=False)
-    print("Download complete")
-except Exception as e:
-    print(f"Failed to download: {e}")
-    
-clf_model.load_state_dict(torch.load("clf_weights.pth", map_location=device))
-
+clf_model = SetFitModel.from_pretrained("trained_setfit_model")
+clf_model.to(device)
 url = input("Elit Link: ")
-paragraphs = scrape_pars(url)
-facts = []
-for par in paragraphs:
-    logits, conf, pred = classify(par, clf_model, tokenizer, device)
-    if pred == "Facts":
-        facts.append(par)
-facts_text = " ".join(facts)
-print(facts_text)
+pars = scrape_pars(url)
+preds = clf_model.predict(pars)
+
+full_facts, i = [], 1
+for par, pred in zip(pars, preds):
+    text = " ".join(par.split()[:6])
+    print(f"Paragraph {i} : {text}...\nPredicted label: {pred}\n")
+    i+=1
+    if pred == 1:
+        full_facts.append(par)
+facts_text = " ".join(full_facts)
+print(f"Extracted Facts: {facts_text}")
 print(f"Word Count: {len(facts_text.split())}")
 
 
@@ -41,8 +39,10 @@ print(f"Word Count: {len(facts_text.split())}")
 sum_tokenizer = AutoTokenizer.from_pretrained("nsi319/legal-pegasus")  
 sum_model = AutoModelForSeq2SeqLM.from_pretrained("nsi319/legal-pegasus").to(device)
 
-input_tokenized = sum_tokenizer.encode(facts_text, return_tensors='pt',max_length=1024,truncation=True).input_ids.to(device)
-summary_ids = sum_model.generate(input_tokenized,
+input_tokenized = sum_tokenizer.encode_plus(facts_text, return_tensors='pt', max_length=1024, truncation=True)
+input_ids = input_tokenized['input_ids'].to(device)
+
+summary_ids = sum_model.generate(input_ids,
                                   num_beams=5,
                                   no_repeat_ngram_size=3,
                                   length_penalty=4.0,
@@ -53,41 +53,44 @@ summary = sum_tokenizer.decode(summary_ids[0], skip_special_tokens=True)
 print(f"Initial Summary: {summary}")
 print(f"Summary word count: {len(summary.split())}")
 
-"""
-sum_tokenizer = AutoTokenizer.from_pretrained("nsi319/legal-led-base-16384")  
-sum_model = AutoModelForSeq2SeqLM.from_pretrained("nsi319/legal-led-base-16384")
-
-input_tokenized = sum_tokenizer.encode(facts_text, return_tensors='pt',padding="max_length",pad_to_max_length=True, max_length=6144,truncation=True)
-summary_ids = sum_model.generate(input_tokenized,
-                                  num_beams=4,
-                                  no_repeat_ngram_size=3,
-                                  length_penalty=2,
-                                  min_length=350,
-                                  max_length=500)
-
-summary = [sum_tokenizer.decode(g, skip_special_tokens=True, clean_up_tokenization_spaces=False) for g in summary_ids][0]
-print(summary)"""
-
 # 3) Refine the summary
+further_summary = ""
+while further_summary != "Y" and further_summary != "N":
+    further_summary = input("Do you want to summarise further? (Y/N)")
+if further_summary == "N":
+    exit()
 tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-large")
 model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-large").to(device)
-prompt = f"Refine the following summary to focus only on the facts of the case and improve its readability: {summary}"
+prompt = f"Summarize the following text to make it more concise: {summary}"
 
 input_ids = tokenizer(prompt, return_tensors="pt", truncation=True, padding=True).input_ids.to(device)
-outputs = model.generate(input_ids, max_length = 350, num_beams=5, early_stopping=True)
+outputs = model.generate(input_ids, min_length=128, max_length = 512, num_beams=5, early_stopping=True)
 
 refined_summary = tokenizer.decode(outputs[0], skip_special_tokens=True)
 print(f"Refined summary: {refined_summary}")
 print(f"Word Count: {len(refined_summary.split())}")
 
 """
+summary_tokenized = sum_tokenizer.encode_plus(summary, return_tensors='pt', max_length=1024, truncation=True)
+input_ids = summary_tokenized['input_ids'].to(device)
+summary_ids = sum_model.generate(input_ids,
+                                  num_beams=5,
+                                  no_repeat_ngram_size=3,
+                                  length_penalty=10.0,
+                                  max_length=256,
+                                  early_stopping=True)
+refined_summary = sum_tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+print(f"Initial Summary: {refined_summary}")
+print(f"Summary word count: {len(refined_summary.split())}")"""
+
+""" # BART
 bart_tokenizer = BartTokenizer.from_pretrained("facebook/bart-large")
-bart_model = BartForConditionalGeneration.from_pretrained("facebook/bart-large")
+bart_model = BartForConditionalGeneration.from_pretrained("facebook/bart-large").to(device)
 
-prompt = f"Refine the following text to make it shorter, more cohesive and reader-friendly: {summary}"
-inputs = bart_tokenizer(prompt, return_tensors="pt")
+prompt = f"Summarize this text to make it clearer and more concise: {summary}"
+inputs_ids = bart_tokenizer(prompt, return_tensors="pt", truncation=True, padding=True).input_ids.to(device)
 
-outputs = bart_model.generate(inputs["input_ids"], max_length=350, num_beams=5, length_penalty=4, early_stopping=True)
+outputs = bart_model.generate(inputs_ids, max_length=350, num_beams=5, length_penalty=10, early_stopping=True)
 refined_summary = bart_tokenizer.decode(outputs[0], skip_special_tokens=True)
 print(f"Refined Summary: {refined_summary}")
 print(f"Word Count: {len(refined_summary.split())}")"""

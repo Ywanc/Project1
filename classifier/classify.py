@@ -1,6 +1,5 @@
 import torch
-from classifier.model import TextClassifier
-from transformers import AutoTokenizer 
+from setfit import SetFitModel
 import re
 import requests
 from bs4 import BeautifulSoup
@@ -10,7 +9,6 @@ def classify(input_text, model, tokenizer, device):
     num_to_label = {0: 'Facts',1: 'Decision', 2: 'Others'}
 
     tokenized_input = tokenizer(input_text, padding=True, truncation=True,return_tensors='pt')
-
     input_ids = tokenized_input['input_ids'].to(device)
     attention_mask = tokenized_input['attention_mask'].to(device)
     # make prediction with model
@@ -20,7 +18,7 @@ def classify(input_text, model, tokenizer, device):
         probs = torch.softmax(logits, dim=1)
         confidence = torch.max(probs, dim=1).values
         pred = torch.argmax(probs, dim=1)
-    return logits, round(confidence.item(), 3), num_to_label[pred.item()]
+    return logits, round(confidence.item(), 3), num_to_label[int(pred.item())]
 
 # takes elit link, returns list of all the paragraphs
 def scrape_pars(url):
@@ -36,8 +34,8 @@ def scrape_pars(url):
     
     response = requests.get(url)
     soup = BeautifulSoup(response.content, 'html.parser')
-    paragraphs = soup.find_all(lambda tag:tag.name in ['div','p'], class_=lambda x:x and 'Judg-1' in x)
-    
+    paragraphs = soup.find_all(lambda tag: tag.name in ['div', 'p'] and ('Judg-1' in (tag.get('class', [])) if tag.has_attr('class') else False))
+
     par_list = []
     for par in paragraphs:
         # curr text
@@ -61,7 +59,28 @@ def scrape_pars(url):
                 par_list[-1] = par_list[-1] + " " + cur_tag_text
     return par_list
 
+# Get Url
 """
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model = SetFitModel.from_pretrained("train_results\\trained_model")
+model.to(device)
+
+url = input("Elit Link: ")
+print(" ")
+pars = scrape_pars(url)
+
+preds = model.predict(pars)
+
+i=1
+full_facts = []
+for par, pred in zip(pars, preds):
+    text = " ".join(par.split()[:6])
+    print(f"Paragraph {i} : {text}...\nPredicted label: {pred}\n")
+    i+=1
+    if pred == 1:
+        full_facts.append(par)
+    
+print(" ".join(full_facts))
 device = "cuda" if torch.cuda.is_available() else "cpu"
 tokenizer = AutoTokenizer.from_pretrained("nlpaueb/legal-bert-base-uncased")
 model = TextClassifier(num_cats=3).to(device)
@@ -79,4 +98,5 @@ for par in pars:
         facts.append(par)
     i+=1
 print(facts)
+
 """
